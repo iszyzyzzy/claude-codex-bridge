@@ -85,7 +85,7 @@ test("MCP advertises channel capability, typed tools, and nonblocking push event
   expect(session.status).toBe("running");
   const threadId = session.threadId;
   await sleep(30);
-  expect(events.some((event) => event.meta.kind === "progress")).toBe(true);
+  expect(events).toEqual([]);
   expect(
     (await call("codex_message", { threadId, message: "steer over MCP" })).mode,
   ).toBe("steered");
@@ -127,4 +127,17 @@ test("MCP question answer reaches Codex and tool errors use isError", async () =
       })
     ).isError,
   ).toBe(true);
+});
+
+test("MCP exposes reasoningEffort and passes it to Codex", async () => {
+  const { call, events } = await connect();
+  const session = await call("codex_start", {
+    cwd: process.cwd(),
+    prompt: "effort",
+    reasoningEffort: "high",
+  });
+  expect(session.reasoningEffort).toBe("high");
+  expect(session.lastAnswer).toBe("high");
+  await sleep(10);
+  expect(events.map((event) => event.content)).toEqual(["high"]);
 });

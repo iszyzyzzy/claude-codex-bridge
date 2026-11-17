@@ -22,8 +22,15 @@ await build({
 });
 await chmod(resolve(root, "dist/server.js"), 0o755);
 const pack = spawnSync(
-  "npm",
-  ["pack", "--ignore-scripts", "--json", "--pack-destination", destination],
+  process.env.npm_execpath ? process.execPath : "npm",
+  [
+    ...(process.env.npm_execpath ? [process.env.npm_execpath] : []),
+    "pack",
+    "--ignore-scripts",
+    "--json",
+    "--pack-destination",
+    destination,
+  ],
   { cwd: root, encoding: "utf8" },
 );
 if (pack.status !== 0) throw pack.error ?? new Error(pack.stderr);

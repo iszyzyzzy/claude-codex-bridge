@@ -22,7 +22,7 @@ const finish = (threadId: string, status = "completed", text = "finished") => {
   notify("item/completed", {
     threadId,
     turnId: thread.turnId,
-    item: { type: "agentMessage", id: "answer", text },
+    item: { type: "agentMessage", id: "answer", text, phase: "final_answer" },
   });
   notify("turn/completed", { threadId, turn: turn(thread.turnId, status) });
   thread.turnId = "";
@@ -160,6 +160,24 @@ createInterface({ input: process.stdin }).on("line", (line) => {
         threadId: params.threadId,
         item: { type: "userMessage" },
       });
+      if (prompt === "effort")
+        finish(params.threadId, "completed", params.effort ?? "default");
+      if (prompt === "phases") {
+        for (const [phase, text] of [
+          ["commentary", "working"],
+          ["final_answer", "final result"],
+          ["commentary", "cleanup"],
+        ]) {
+          notify("item/completed", {
+            threadId: params.threadId,
+            item: { type: "agentMessage", id: phase, phase, text },
+          });
+        }
+        notify("turn/completed", {
+          threadId: params.threadId,
+          turn: turn(thread.turnId, "completed"),
+        });
+      }
       if (prompt === "instant") finish(params.threadId);
       if (prompt === "failed") {
         notify("error", {
@@ -205,7 +223,9 @@ createInterface({ input: process.stdin }).on("line", (line) => {
           method: "item/permissions/requestApproval",
           params: { threadId: params.threadId },
         });
-      } else if (!["instant", "failed", "long"].includes(prompt)) {
+      } else if (
+        !["instant", "failed", "long", "effort", "phases"].includes(prompt)
+      ) {
         setTimeout(() => {
           notify("item/started", {
             threadId: params.threadId,

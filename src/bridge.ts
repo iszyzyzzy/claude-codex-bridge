@@ -17,6 +17,7 @@ type Question = { requestId: string; params: ToolRequestUserInputParams };
 type Session = {
   threadId: string;
   model: string;
+  reasoningEffort: string | null;
   cwd: string;
   status:
     | "idle"
@@ -81,6 +82,7 @@ export class Bridge {
     prompt: string;
     cwd: string;
     model?: string;
+    reasoningEffort?: string;
     serviceTier?: string;
   }) {
     if (!isAbsolute(input.cwd) || !(await stat(input.cwd)).isDirectory()) {
@@ -95,7 +97,12 @@ export class Bridge {
       approvalPolicy: "never",
       sandbox: "danger-full-access",
     });
-    const session = this.attach(result.thread.id, result.model, result.cwd);
+    const session = this.attach(
+      result.thread.id,
+      result.model,
+      result.cwd,
+      input.reasoningEffort ?? result.reasoningEffort,
+    );
     return this.lock(session, async () => {
       await this.begin(session, input.prompt);
       return this.snapshot(session);
@@ -112,7 +119,12 @@ export class Bridge {
       sandbox: "danger-full-access",
       initialTurnsPage: { limit: 1, sortDirection: "desc", itemsView: "full" },
     });
-    const session = this.attach(result.thread.id, result.model, result.cwd);
+    const session = this.attach(
+      result.thread.id,
+      result.model,
+      result.cwd,
+      result.reasoningEffort,
+    );
     const turn = result.initialTurnsPage?.data[0] ?? result.thread.turns.at(-1);
     if (turn) {
       session.lastTurnId = turn.id;
@@ -120,7 +132,11 @@ export class Bridge {
       session.status = turn.status === "inProgress" ? "running" : turn.status;
     }
     for (const item of turn?.items ?? []) {
-      if (item.type === "agentMessage") this.answerText(session, item.text);
+      if (
+        item.type === "agentMessage" &&
+        (item.phase == null || item.phase === "final_answer")
+      )
+        this.answerText(session, item.text);
     }
     return this.snapshot(session);
   }
@@ -199,11 +215,16 @@ export class Bridge {
       gap: after < oldest - 1,
     };
   }
-
-  private attach(threadId: string, model: string, cwd: string) {
+  private attach(
+    threadId: string,
+    model: string,
+    cwd: string,
+    reasoningEffort: string | null = null,
+  ) {
     const session: Session = {
       threadId,
       model,
+      reasoningEffort,
       cwd,
       status: "idle",
       turnId: null,
@@ -249,6 +270,7 @@ export class Bridge {
       // turn/started may arrive before this response; notifications own the live state.
       const result = await this.rpc.call("turn/start", {
         threadId: session.threadId,
+        effort: session.reasoningEffort,
         input: [{ type: "text", text, text_elements: [] }],
       });
       if (session.lastTurnId !== result.turn.id) {
@@ -260,7 +282,7 @@ export class Bridge {
       }
     } catch (error) {
       if (session.status !== "unavailable") session.status = "failed";
-      this.emit(session.threadId, "error", String(error));
+      this.emit(session.threadId, "failed", String(error));
       throw error;
     }
   }
@@ -290,7 +312,8 @@ export class Bridge {
         const item = event.params.item;
         if (item.type === "agentMessage" && event.method === "item/completed") {
           this.flush(session.threadId);
-          this.answerText(session, item.text);
+          if (item.phase == null || item.phase === "final_answer")
+            this.answerText(session, item.text);
           this.emit(session.threadId, "message", item.text);
         } else if (
           [
@@ -323,7 +346,9 @@ export class Bridge {
           session.threadId,
           session.status,
           event.params.turn.error?.message ??
-            `Turn ${event.params.turn.id} ${session.status}`,
+            (session.lastAnswer ||
+              `Turn ${event.params.turn.id} ${session.status}; no final answer`),
+          session.answerTruncated,
         );
         break;
       case "serverRequest/resolved":
@@ -405,16 +430,25 @@ export class Bridge {
     text: string,
     truncated = false,
   ) {
+    const terminal = [
+      "completed",
+      "interrupted",
+      "failed",
+      "unavailable",
+    ].includes(kind);
+    const maxLength = terminal ? 64_000 : 8_000;
     const event = {
       sequence: ++this.sequence,
       threadId,
       kind,
-      text: text.slice(0, 8_000),
-      truncated: truncated || text.length > 8_000,
+      text: text.slice(0, maxLength),
+      truncated: truncated || text.length > maxLength,
       timestamp: new Date().toISOString(),
     };
     this.journal.push(event);
     if (this.journal.length > this.journalLimit) this.journal.shift();
+    // 中间事件留作按需诊断，避免通过频道反复唤醒 Claude 并占用上下文。
+    if (!terminal && kind !== "question") return;
     this.delivery = this.delivery.then(async () => {
       try {
         await this.publish(event);

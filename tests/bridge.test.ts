@@ -43,17 +43,25 @@ afterEach(async () => {
   await Promise.all(cleanup.splice(0).map((bridge) => bridge.close()));
 });
 
-test("acceptance returns while Codex runs; progress arrives and steering affects that turn", async () => {
+test("acceptance returns while Codex runs; only the final result is pushed", async () => {
   const { bridge, events } = fixture();
   const session = await bridge.start({ cwd, prompt: "work", model: "fixture" });
   expect(session.status).toBe("running");
-  await until(() => events.some((event) => event.kind === "progress"));
-  expect(events.some((event) => event.text.includes("working output"))).toBe(
-    true,
+  await until(() =>
+    bridge.events().events.some((event) => event.kind === "progress"),
   );
+  expect(events).toEqual([]);
+  expect(
+    bridge
+      .events()
+      .events.some((event) => event.text.includes("working output")),
+  ).toBe(true);
   const result = await bridge.message(session.threadId, "new direction");
   expect(result.mode).toBe("steered");
   await until(() => events.some((event) => event.kind === "completed"));
+  expect(events.map((event) => [event.kind, event.text])).toEqual([
+    ["completed", "steered: new direction"],
+  ]);
   expect(bridge.status(session.threadId).sessions[0].lastAnswer).toBe(
     "steered: new direction",
   );
@@ -80,7 +88,10 @@ test("start response establishes a running turn before the started notification 
   expect(session.status).toBe("running");
   expect(typeof session.turnId).toBe("string");
   expect(events).toEqual([]);
-  await until(() => events.some((event) => event.kind === "started"));
+  await until(() =>
+    bridge.events().events.some((event) => event.kind === "started"),
+  );
+  expect(events).toEqual([]);
   expect(bridge.status(session.threadId).sessions[0].turnId).toBe(
     session.turnId,
   );
@@ -89,8 +100,13 @@ test("start response establishes a running turn before the started notification 
 test("progress bursts retain the tail and report truncation", async () => {
   const { bridge, events } = fixture();
   await bridge.start({ cwd, prompt: "burst" });
-  await until(() => events.some((event) => event.kind === "progress"));
-  const progress = events.find((event) => event.kind === "progress");
+  await until(() =>
+    bridge.events().events.some((event) => event.kind === "progress"),
+  );
+  const progress = bridge
+    .events()
+    .events.find((event) => event.kind === "progress");
+  expect(events).toEqual([]);
   expect(progress?.truncated).toBe(true);
   expect(progress?.text.length).toBe(8_000);
   expect(progress?.text.endsWith("output")).toBe(true);
@@ -287,4 +303,37 @@ test("shutdown kills a Codex process that ignores SIGTERM", async () => {
   await bridge.models();
   await bridge.close();
   await expect(rpc.call("model/list", {})).rejects.toThrow("closed");
+});
+
+test("reasoning effort reaches Codex and is kept for follow-up turns", async () => {
+  const { bridge } = fixture();
+  const session = await bridge.start({
+    cwd,
+    prompt: "effort",
+    reasoningEffort: "xhigh",
+  });
+  expect(session.reasoningEffort).toBe("xhigh");
+  expect(session.lastAnswer).toBe("xhigh");
+  expect((await bridge.message(session.threadId, "effort")).lastAnswer).toBe(
+    "xhigh",
+  );
+});
+
+test("commentary cannot replace a final answer and completion carries the retained answer", async () => {
+  const { bridge, events } = fixture();
+  await bridge.start({ cwd, prompt: "phases" });
+  await until(() => events.length > 0);
+  expect(events.map(({ kind, text }) => ({ kind, text }))).toEqual([
+    { kind: "completed", text: "final result" },
+  ]);
+});
+
+test("completion delivers answers larger than progress batches with an explicit limit", async () => {
+  const { bridge, events } = fixture();
+  await bridge.start({ cwd, prompt: "long" });
+  await until(() => events.length > 0);
+  expect(events).toHaveLength(1);
+  expect(events[0].kind).toBe("completed");
+  expect(events[0].text).toHaveLength(64_000);
+  expect(events[0].truncated).toBe(true);
 });

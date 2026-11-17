@@ -3,7 +3,7 @@
 # Claude Codex Bridge
 
 Run OpenAI Codex agents from Claude Code. Ask Claude to delegate a task to
-Codex, follow its progress, send another instruction while it works, stop it,
+Codex, receive its final answer, send another instruction while it works, stop it,
 or continue a saved session.
 
 The plugin connects Claude's MCP tools and Channels to `codex app-server`.
@@ -21,7 +21,7 @@ sequenceDiagram
     Bridge->>Codex: Start a thread and turn
     Bridge-->>Claude: Session ID
     Codex-->>Bridge: Progress, questions, result
-    Bridge-->>Claude: Channel notifications
+    Bridge-->>Claude: Final result or question
     You->>Claude: Add an instruction or stop
     Claude->>Bridge: codex_message / codex_stop
     Bridge->>Codex: Steer / interrupt the turn
@@ -44,6 +44,23 @@ uses `npx` to fetch its exact package version on first startup; subsequent
 starts use npm's cache. No source build or protocol generation is required.
 
 ## Install
+
+### Local build on Windows
+
+```powershell
+npm ci
+npm run build
+powershell -ExecutionPolicy Bypass -File scripts/install-local.ps1
+```
+
+The local installer enables `codex-bridge-local@codex-bridge-local`, disables the
+upstream bridge, and uses an installed Node executable rather than a vfox temporary
+path. Restart Claude after installing. For explicit channel opt-in, launch with:
+
+```powershell
+claude --dangerously-load-development-channels plugin:codex-bridge-local@codex-bridge-local
+```
+Run the installer again after rebuilding to update the installed copy.
 
 ### 1. Check the required tools
 
@@ -109,11 +126,11 @@ claude
 The maintainer reports that `channelsEnabled: true` enables this ordinary
 startup on Claude Code 2.1.261 without a shell alias or wrapper. Channel
 activation can also depend on your account and organization policy. Verify
-incoming progress with the example below before relying on it.
+incoming results with the example below before relying on it.
 
 Anthropic's [Channels documentation](https://code.claude.com/docs/en/channels#enterprise-controls)
 currently describes `channelsEnabled` as a managed setting and requires
-per-session opt-in. If tools load but incoming progress does not arrive, see
+per-session opt-in. If tools load but incoming results does not arrive, see
 [Channels troubleshooting](#tools-work-but-live-progress-does-not-arrive).
 
 ## Use it
@@ -123,7 +140,7 @@ an explicit model when you want one:
 
 > Use the bridge to start Codex with model gpt-5.6-luna in
 > /absolute/path/to/my-project. Review the authentication code and suggest a
-> fix for the failing login test. Report its progress as channel events arrive.
+> fix for the failing login test. Use high reasoning effort and return the final result.
 
 To check that notifications work, use a task with a short delay:
 
@@ -152,6 +169,18 @@ Keep the `threadId` if you want to continue after restarting Claude:
 Claude can list available models with `codex_models`. An explicitly selected
 model is requested without provider fallback. Ask for a service tier such as
 `fast` to override the `service_tier` in your Codex config for that thread.
+Pass `reasoningEffort` to `codex_start` to set the turn's reasoning effort
+(for example `high` or `xhigh`). Use `codex_models` to check the selected model's
+`supportedReasoningEfforts`; omitting it keeps the Codex default. The selected
+effort is retained for subsequent turns and saved by Codex for resuming.
+
+```json
+{
+  "cwd": "D:/code/my-project",
+  "prompt": "Implement the requested change and run the relevant tests",
+  "reasoningEffort": "high"
+}
+```
 
 ## Available tools
 
@@ -174,8 +203,12 @@ Control calls return promptly; the task continues inside Codex. This does not
 use a long-running Claude Bash tool call, and task duration is independent of
 Claude's Bash timeout. Control acknowledgements have a 30-second timeout.
 
-Codex progress, questions, errors, and completion arrive through Claude
-Channels. Claude processes queued notifications when it can take its next
+Only terminal results (completed, interrupted, failed, or unavailable) and
+questions arrive through Claude Channels. A completed event contains the final
+answer, rather than requiring a separate status read. Commentary, command output,
+and tool activity remain in the bridge's journal and are not automatically sent
+to Claude. Calling `codex_events` explicitly returns those intermediate records;
+avoid polling it when only the final answer is needed. Claude processes queued notifications when it can take its next
 turn. A successful notification write does not confirm that Claude has read it.
 Codex sessions appear through tools and messages, not as native Claude agents
 in its subagent panel.
@@ -190,8 +223,8 @@ API proxy, model impersonation, interception hook, or global timeout override.
 Exiting Claude stops the bridge and its app-server process. Saved Codex threads
 can be resumed; running work is not hosted by a background daemon.
 
-Progress is batched about once a second and capped at 8,000 characters per
-batch. The bridge retains 200 recent events across sessions and up to 64,000
+Journal progress is batched about once a second and capped at 8,000 characters
+per batch. Terminal notifications carry up to 64,000 characters. The bridge retains 200 recent events across sessions and up to 64,000
 characters of the latest answer. Truncation and an expired event cursor are
 reported explicitly. The event journal lives only for the current bridge
 process.
@@ -261,7 +294,7 @@ publication step.
 
 ## Troubleshooting
 
-### Tools work but live progress does not arrive
+### Tools work but final results do not arrive
 
 Tool availability and incoming channel delivery have separate gates. Use
 `codex_status` to confirm the task is running and check Claude's startup notices
