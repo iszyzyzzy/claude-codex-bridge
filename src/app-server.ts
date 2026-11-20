@@ -38,7 +38,12 @@ export class AppServer {
   private stopping = false;
 
   constructor(
-    private command = ["codex", "app-server", "--listen", "stdio://"],
+    private command = [
+      process.env.CODEX_BRIDGE_EXECUTABLE || "codex",
+      "app-server",
+      "--listen",
+      "stdio://",
+    ],
     private timeoutMs = 30_000,
   ) {}
 

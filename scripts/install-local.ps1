@@ -1,4 +1,5 @@
 ﻿param(
+    [string]$CodexPath = (Get-Command codex.exe -CommandType Application -ErrorAction Stop | Select-Object -First 1 -ExpandProperty Source),
     [string]$NodePath = (& node -p "require('node:fs').realpathSync(process.execPath)")
 )
 
@@ -21,6 +22,7 @@ $plugin.name = 'codex-bridge-local'
 $plugin.version = "$($plugin.version)-local"
 $plugin.mcpServers.'codex-bridge'.command = $NodePath
 $plugin.mcpServers.'codex-bridge'.args = @('${CLAUDE_PLUGIN_ROOT}/dist/server.js')
+$plugin.mcpServers.'codex-bridge' | Add-Member -NotePropertyName env -NotePropertyValue @{ CODEX_BRIDGE_EXECUTABLE = (Resolve-Path -LiteralPath $CodexPath).Path }
 $market = Get-Content -Raw (Join-Path $projectRoot '.claude-plugin/marketplace.json') | ConvertFrom-Json
 $market.name = 'codex-bridge-local'
 $market.plugins[0].name = 'codex-bridge-local'
@@ -51,7 +53,7 @@ if ($installed.id -contains 'codex-bridge-local@codex-bridge-local') {
 }
 & claude plugin install codex-bridge-local@codex-bridge-local --scope user
 if ($LASTEXITCODE -ne 0) { throw '安装本地 bridge 插件失败' }
-if ($installed.id -contains 'claude-codex-bridge@claude-codex-bridge') {
+if ($installed | Where-Object { $_.id -eq 'claude-codex-bridge@claude-codex-bridge' -and $_.enabled }) {
     & claude plugin disable claude-codex-bridge@claude-codex-bridge --scope user
     if ($LASTEXITCODE -ne 0) { throw '禁用原版 bridge 失败' }
 }
