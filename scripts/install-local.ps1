@@ -1,5 +1,5 @@
 ﻿param(
-    [string]$CodexPath = (Get-Command codex.exe -CommandType Application -ErrorAction Stop | Select-Object -First 1 -ExpandProperty Source),
+    [string]$CodexPath = 'appx:OpenAI.Codex',
     [string]$NodePath = (& node -p "require('node:fs').realpathSync(process.execPath)")
 )
 
@@ -22,7 +22,8 @@ $plugin.name = 'codex-bridge-local'
 $plugin.version = "$($plugin.version)-local"
 $plugin.mcpServers.'codex-bridge'.command = $NodePath
 $plugin.mcpServers.'codex-bridge'.args = @('${CLAUDE_PLUGIN_ROOT}/dist/server.js')
-$plugin.mcpServers.'codex-bridge' | Add-Member -NotePropertyName env -NotePropertyValue @{ CODEX_BRIDGE_EXECUTABLE = (Resolve-Path -LiteralPath $CodexPath).Path }
+if ($CodexPath -ne 'appx:OpenAI.Codex') { $CodexPath = (Resolve-Path -LiteralPath $CodexPath).Path }
+$plugin.mcpServers.'codex-bridge' | Add-Member -NotePropertyName env -NotePropertyValue @{ CODEX_BRIDGE_EXECUTABLE = $CodexPath }
 $market = Get-Content -Raw (Join-Path $projectRoot '.claude-plugin/marketplace.json') | ConvertFrom-Json
 $market.name = 'codex-bridge-local'
 $market.plugins[0].name = 'codex-bridge-local'

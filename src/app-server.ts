@@ -1,5 +1,11 @@
-import { type ChildProcessWithoutNullStreams, spawn } from "node:child_process";
+import {
+  type ChildProcessWithoutNullStreams,
+  execFile,
+  spawn,
+} from "node:child_process";
+import { join } from "node:path";
 import { createInterface } from "node:readline";
+import { promisify } from "node:util";
 import type { ClientRequest } from "../.generated/ClientRequest.ts";
 import type { InitializeResponse } from "../.generated/InitializeResponse.ts";
 import type { ServerNotification } from "../.generated/ServerNotification.ts";
@@ -53,7 +59,27 @@ export class AppServer {
   }
 
   private async initialize() {
-    const [command, ...args] = this.command;
+    let [command, ...args] = this.command;
+    if (process.platform === "win32" && command === "appx:OpenAI.Codex") {
+      // 商店更新会替换版本目录，包注册始终指向当前用户安装的版本。
+      const powershell = join(
+        process.env.SystemRoot || "C:\\Windows",
+        "System32/WindowsPowerShell/v1.0/powershell.exe",
+      );
+      const { stdout } = await promisify(execFile)(
+        powershell,
+        [
+          "-NoProfile",
+          "-NonInteractive",
+          "-Command",
+          "[Console]::OutputEncoding = [Text.UTF8Encoding]::new($false); (Get-AppxPackage -Name OpenAI.Codex -ErrorAction Stop).InstallLocation",
+        ],
+        { windowsHide: true, timeout: this.timeoutMs },
+      );
+      if (!stdout.trim())
+        throw new Error("Windows 未找到当前用户的 OpenAI.Codex 安装包");
+      command = join(stdout.trim(), "app/resources/codex.exe");
+    }
     this.child = spawn(command, args, { stdio: "pipe" });
     this.child.stderr.pipe(process.stderr, { end: false });
     this.child.on("error", (error) => this.fail(error));
