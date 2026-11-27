@@ -182,6 +182,20 @@ effort is retained for subsequent turns and saved by Codex for resuming.
 }
 ```
 
+### Antigravity on Windows
+
+Register the built server with the Windows desktop Codex installation:
+
+```powershell
+agy mcp add --env CODEX_BRIDGE_HOST=antigravity --env CODEX_BRIDGE_EXECUTABLE=appx:OpenAI.Codex codex-bridge (Get-Command node.exe).Source (Resolve-Path ./dist/server.js).Path
+```
+
+When a turn is running, start its returned `backgroundCommand` as a native
+Antigravity background command and end the agent turn. The command prints only
+the result or pending question. After answering a question, launch the new
+wait command if the turn is still running. Keep the conversation and its bridge
+process open until the result arrives. The task directory must be writable and readable by the Antigravity shell. The bridge uses temporary files under `.codex-bridge-wait/` and removes them on normal shutdown.
+
 ## Available tools
 
 | Tool | What you can ask Claude to do |

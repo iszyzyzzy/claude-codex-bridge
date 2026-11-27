@@ -12,3 +12,4 @@ dist/
 .DS_Store
 gha-creds-*.json
 .rumdl_cache/
+.codex-bridge-wait/
